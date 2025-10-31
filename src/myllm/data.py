@@ -80,7 +80,7 @@ class PackedDataset(Dataset):
         self.block_size = block_size
 
     def __len__(self) -> int:
-        return max(0, len(self.data) - self.block_size - 1)
+        return max(0, len(self.data) - self.block_size)
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         start = int(idx)

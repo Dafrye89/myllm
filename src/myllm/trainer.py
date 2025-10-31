@@ -134,9 +134,15 @@ def train(experiment: ExperimentConfig) -> None:
 
     amp_enabled = cfg.training.mixed_precision and device.type == "cuda"
     amp_dtype = dtype_pref if amp_enabled else torch.float32
-    scaler = (
-        AMPGradScaler(device_type="cuda", enabled=True) if amp_enabled else None
-    )
+    scaler = None
+    if amp_enabled and amp_dtype == torch.float16:
+        scaler_kwargs = {"enabled": True}
+        scaler_params = inspect.signature(AMPGradScaler.__init__).parameters
+        if "device_type" in scaler_params:
+            scaler_kwargs["device_type"] = "cuda"
+        elif "device" in scaler_params:
+            scaler_kwargs["device"] = "cuda"
+        scaler = AMPGradScaler(**scaler_kwargs)
 
     global_step = 0
     start_time = time.time()
@@ -147,7 +153,7 @@ def train(experiment: ExperimentConfig) -> None:
 
     print(f"Training on {device} with dtype={dtype_pref}")
     print(
-        f"Dataset tokens: train≈{len(train_loader.dataset.data)}, val≈{len(val_loader.dataset.data)}"
+        f"Dataset tokens: train={len(train_loader.dataset.data)}, val={len(val_loader.dataset.data)}"
     )
     print(
         f"Micro batch={cfg.training.micro_batch_size}, grad_accum={cfg.training.grad_accumulation_steps}"

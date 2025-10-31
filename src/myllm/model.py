@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import inspect
 from contextlib import nullcontext
 from typing import Optional, Tuple
 
@@ -108,9 +109,17 @@ class GPT(nn.Module):
         x = self.tok_emb(idx) + self.pos_emb(pos)
         x = self.drop(x)
 
+        checkpoint_params = None
+        if self.use_checkpoint and self.training:
+            checkpoint_sig = inspect.signature(checkpoint.checkpoint)
+            checkpoint_params = checkpoint_sig.parameters
+
         for block in self.blocks:
             if self.use_checkpoint and self.training:
-                x = checkpoint.checkpoint(block, x)
+                if checkpoint_params and "use_reentrant" in checkpoint_params:
+                    x = checkpoint.checkpoint(block, x, use_reentrant=False)
+                else:
+                    x = checkpoint.checkpoint(block, x)
             else:
                 x = block(x)
 
