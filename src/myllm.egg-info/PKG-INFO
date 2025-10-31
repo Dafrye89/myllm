@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: myllm
+Version: 0.1.0
+Summary: GPT-1 style training toolkit
+Author: Your Name
+Requires-Python: >=3.10
+Requires-Dist: torch>=2.1.0
+Requires-Dist: sentencepiece>=0.1.99
+Requires-Dist: numpy>=1.24.0
