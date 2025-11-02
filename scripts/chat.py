@@ -128,26 +128,46 @@ def main() -> int:
             conversation_tokens = conversation_tokens[-context_limit:]
 
         prompt_tokens = conversation_tokens[:]
-        input_ids = torch.tensor([prompt_tokens], device=device, dtype=torch.long)
+        generated_tokens = prompt_tokens[:]
+        reply_tokens: list[int] = []
+        printed_text = ""
+        print("Assistant: ", end="", flush=True)
+        temperature = max(args.temperature, 1e-5)
 
+        start_time = time.time()
         with torch.no_grad():
-            start_time = time.time()
-            generated = model.generate(
-                input_ids,
-                max_new_tokens=args.max_response_tokens,
-                temperature=args.temperature,
-                top_k=args.top_k if args.top_k > 0 else None,
-            )
-            elapsed = time.time() - start_time
+            for _ in range(args.max_response_tokens):
+                context_tokens = generated_tokens[-config.model.block_size :]
+                input_ids = torch.tensor(
+                    [context_tokens], device=device, dtype=torch.long
+                )
+                logits, _ = model(input_ids)
+                logits = logits[:, -1, :] / temperature
+                if args.top_k > 0:
+                    values, _ = torch.topk(logits, args.top_k)
+                    cutoff = values[:, [-1]]
+                    logits = logits.masked_fill(logits < cutoff, float("-inf"))
+                probs = torch.softmax(logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1).item()
 
-        generated_tokens = generated[0].tolist()
-        reply_tokens = generated_tokens[len(prompt_tokens) :]
-        if not reply_tokens:
-            print("Assistant: (no output)")
+                generated_tokens.append(next_token)
+                reply_tokens.append(next_token)
+
+                new_text = tokenizer.decode(reply_tokens)
+                if new_text:
+                    delta = new_text[len(printed_text) :]
+                    if delta:
+                        print(delta, end="", flush=True)
+                        printed_text = new_text
+
+        elapsed = time.time() - start_time
+
+        if not reply_tokens or not printed_text:
+            print("(no output)")
+            conversation_tokens = generated_tokens
             continue
 
-        reply_text = tokenizer.decode(reply_tokens).strip()
-        print(f"Assistant: {reply_text}")
+        print()
 
         tok_per_sec = len(reply_tokens) / max(elapsed, 1e-6)
         print(
