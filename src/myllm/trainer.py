@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import inspect
 from contextlib import nullcontext
 from pathlib import Path
 
