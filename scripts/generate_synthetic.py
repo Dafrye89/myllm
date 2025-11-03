@@ -4,7 +4,8 @@ Continuous synthetic dialogue generator for myllm training.
 
 Uses a local OpenAI-compatible endpoint (e.g., LM Studio) to request
 chat completions and saves the results as JSONL with both the assistant's
-"thinking" trace and the final rhyming response.
+"thinking" trace and the final response. Prompts include casual conversation,
+instructional requests, and creative scenarios.
 """
 
 from __future__ import annotations
@@ -20,18 +21,38 @@ from typing import Any, Iterable
 
 import requests
 
+from myllm.utils import format_conversation_sample
 
 DEFAULT_PROMPTS: list[str] = [
-    "Write a bedtime story about a robot who loves gardening.",
+    # Conversational and small talk
+    "Hi there! How are you doing today?",
+    "Hey! How's your day going so far?",
+    "Hello, I just brewed some coffee. Want to chat for a minute?",
+    "Good morning! Any tips to start the day with good energy?",
+    "I'm feeling a little stressed - got any quick relaxation ideas?",
+    "What's a polite way to ask a coworker for help?",
+    "Could you recommend a light, feel-good movie for tonight?",
+    "Tell me a short, wholesome joke.",
+    "What's a clever way to say thank you to a friend?",
+    "I'm meeting someone new. How should I introduce myself confidently?",
+    # Instructional and everyday advice
+    "Give me a simple explanation of how Wi-Fi works.",
+    "How do I politely decline an invitation to dinner?",
+    "What should I cook tonight if I have chicken, broccoli, and rice?",
+    "Help me plan a quick two-day getaway to the mountains.",
+    "What are three tips for staying focused while working from home?",
+    "How can I keep my indoor plants healthy during winter?",
+    # Creative and playful prompts
     "Explain quantum tunnelling as though you were a pirate.",
-    "Compose a recipe for a dessert inspired by thunderstorms.",
-    "Describe a detective solving a crime inside a dream.",
     "Teach a child how photosynthesis works using superhero metaphors.",
-    "Invent a festival celebrated by traveling time tourists.",
-    "Debate the merits of napping versus meditation with yourself.",
+    "Describe a detective solving a crime inside a dream.",
     "Outline a travel guide for visiting the inside of a computer.",
     "Draft a motivational speech from the perspective of a house cat.",
+    "Write a bedtime story about a robot who loves gardening.",
+    "Compose a recipe for a dessert inspired by thunderstorms.",
+    "Invent a festival celebrated by traveling time tourists.",
     "Explain gravity in the style of a Shakespearean sonnet.",
+    "Debate the merits of napping versus meditation with yourself.",
 ]
 
 
@@ -94,15 +115,22 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         default=60.0,
         help="HTTP timeout in seconds for each request (default: %(default)s)",
     )
+    parser.add_argument(
+        "--text-output",
+        type=Path,
+        default=Path("data/raw/synthetic_rhyme.txt"),
+        help="Path to the training text file that mirrors the JSON output (default: %(default)s)",
+    )
     return parser.parse_args(argv)
 
 
 THINKING_INSTRUCTION = (
     "You are producing synthetic training data for a small student model. "
     "For every user prompt you must respond with a JSON object containing "
-    'two keys: "thinking" (your private reasoning, at least two sentences) and '
-    '"response" (the final rhyming answer visible to the user). '
-    "Ensure the final response is a short poem or rhyming stanza that addresses the prompt. "
+    'two keys: "thinking" (your private reasoning, 1-2 concise sentences) and '
+    '"response" (the final answer visible to the user). '
+    "When the prompt is casual small talk, keep your thinking brief yet present. "
+    "Creative prompts may have playful answers but should remain coherent. "
     "Do not include explanations outside of the JSON object."
 )
 
@@ -188,12 +216,30 @@ def append_sample(
         f.write("\n")
 
 
+def append_text_sample(
+    path: Path,
+    prompt: str,
+    thinking: str | None,
+    response: str | None,
+) -> None:
+    block = format_conversation_sample(prompt, thinking, response)
+    if not block:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        if path.exists() and path.stat().st_size > 0:
+            f.write("\n")
+        f.write(block + "\n")
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
     prompts = load_prompts(args.prompt_file)
 
     generated = 0
-    print(f"Writing samples to {args.output} (Ctrl+C to stop)")
+    print(
+        f"Writing samples to {args.output} and mirroring to {args.text_output} (Ctrl+C to stop)"
+    )
     try:
         while args.max_samples <= 0 or generated < args.max_samples:
             user_prompt = pick_prompt(prompts)
@@ -226,6 +272,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 "endpoint_response": result,
             }
             append_sample(args.output, sample)
+            append_text_sample(args.text_output, user_prompt, thinking, response)
 
             generated += 1
             token_summary = ""

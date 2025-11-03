@@ -5,10 +5,15 @@ import math
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import torch
 
+USER_TAG = "<|user|>"
+ASSISTANT_TAG = "<|assistant|>"
+END_OF_CONVERSATION_TAG = "<|endofconversation|>"
+THINK_START_TAG = "<thinking>"
+THINK_END_TAG = "</thinking>"
 
 def set_seed(seed: int) -> None:
     import random
@@ -95,3 +100,27 @@ class WarmupCosineScheduler:
         decay_steps = max(1, self.total_steps - self.warmup)
         cosine = 0.5 * (1 + math.cos(math.pi * progress / decay_steps))
         return self.min_lr + (self.max_lr - self.min_lr) * cosine
+
+
+def format_conversation_sample(
+    prompt: Optional[str],
+    thinking: Optional[str],
+    response: Optional[str],
+) -> str:
+    prompt_text = (prompt or "").strip()
+    thinking_text = (thinking or "").strip()
+    response_text = (response or "").strip()
+
+    lines: list[str] = [USER_TAG, prompt_text, "", ASSISTANT_TAG]
+
+    if thinking_text:
+        lines.extend([THINK_START_TAG, thinking_text, THINK_END_TAG])
+    else:
+        lines.extend([THINK_START_TAG, THINK_END_TAG])
+
+    if response_text:
+        lines.append(response_text)
+
+    lines.append(END_OF_CONVERSATION_TAG)
+
+    return "\n".join(lines).strip()

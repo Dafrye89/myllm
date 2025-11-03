@@ -7,6 +7,7 @@ from pathlib import Path
 from .config import ExperimentConfig, get_preset
 from .data import build_processed_dataset, iter_text_files
 from .tokenizer import load_tokenizer, train_sentencepiece
+from .utils import format_conversation_sample
 from .trainer import train
 
 
@@ -38,14 +39,6 @@ def convert_jsonl_sources(raw_dir: Path) -> None:
         return
     for jsonl_path in jsonl_files:
         txt_path = jsonl_path.with_suffix(".txt")
-        try:
-            if (
-                txt_path.exists()
-                and txt_path.stat().st_mtime >= jsonl_path.stat().st_mtime
-            ):
-                continue
-        except OSError:
-            pass
         conversations: list[str] = []
         with jsonl_path.open("r", encoding="utf-8") as src:
             for line_no, line in enumerate(src, start=1):
@@ -64,18 +57,12 @@ def convert_jsonl_sources(raw_dir: Path) -> None:
                 response = str(record.get("response") or record.get("answer") or "").strip()
                 if not prompt and not response:
                     continue
-                parts: list[str] = []
-                if prompt:
-                    parts.append("<|user|>\n" + prompt)
-                if thinking:
-                    parts.append("<|assistant_think|>\n" + thinking)
-                if response:
-                    parts.append("<|assistant|>\n" + response)
-                parts.append("<|endofconversation|>")
-                conversations.append("\n".join(parts))
+                formatted = format_conversation_sample(prompt, thinking, response)
+                if formatted:
+                    conversations.append(formatted)
         if conversations:
             txt_path.parent.mkdir(parents=True, exist_ok=True)
-            payload = "\n\n".join(conversations) + "\n"
+            payload = "\n\n".join(conversations).strip() + "\n"
             txt_path.write_text(payload, encoding="utf-8")
             print(f"Converted {jsonl_path} -> {txt_path}")
 

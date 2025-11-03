@@ -6,7 +6,6 @@ Interactive console chat that mirrors the conversation markup used for training.
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 import time
 from pathlib import Path
@@ -16,11 +15,13 @@ import torch
 from myllm.config import get_preset
 from myllm.model import GPT
 from myllm.tokenizer import load_tokenizer
-
-USER_TAG = "<|user|>"
-ASSISTANT_THINK_TAG = "<|assistant_think|>"
-ASSISTANT_TAG = "<|assistant|>"
-END_TAG = "<|endofconversation|>"
+from myllm.utils import (
+    USER_TAG,
+    ASSISTANT_TAG,
+    END_OF_CONVERSATION_TAG,
+    THINK_START_TAG,
+    THINK_END_TAG,
+)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -58,8 +59,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--system",
         type=str,
-        default="You are a concise assistant.",
-        help="Optional system note encoded as hidden thinking",
+        default="",
+        help="Optional hidden note encoded in the first thinking block",
     )
     return parser
 
@@ -105,26 +106,18 @@ def parse_generated(text: str) -> tuple[str | None, str]:
     working = text
     thinking = None
 
-    # Remove any duplicated leading user tags.
-    if USER_TAG in working:
-        first_user_idx = working.find(USER_TAG)
-        if first_user_idx > 0:
-            working = working[first_user_idx:]
-
-    if ASSISTANT_THINK_TAG in working:
-        _, tail = working.split(ASSISTANT_THINK_TAG, 1)
+    if THINK_START_TAG in working:
+        _, tail = working.split(THINK_START_TAG, 1)
     else:
         tail = working
 
-    if ASSISTANT_TAG in tail:
-        thinking_part, answer_part = tail.split(ASSISTANT_TAG, 1)
+    if THINK_END_TAG in tail:
+        thinking_part, tail = tail.split(THINK_END_TAG, 1)
         thinking = thinking_part.strip()
-        tail = answer_part
 
-    if END_TAG in tail:
-        tail, _ = tail.split(END_TAG, 1)
+    if END_OF_CONVERSATION_TAG in tail:
+        tail, _ = tail.split(END_OF_CONVERSATION_TAG, 1)
 
-    # Split at the next user tag to avoid the model queuing another turn.
     if USER_TAG in tail:
         tail, _ = tail.split(USER_TAG, 1)
 
@@ -150,7 +143,11 @@ def main() -> int:
     if args.system:
         system_text = args.system.strip()
         if system_text:
-            seed = f"{ASSISTANT_THINK_TAG}\n{system_text}\n{END_TAG}\n"
+            seed = (
+                f"{USER_TAG}\nSystem prompt\n\n"
+                f"{ASSISTANT_TAG}\n{THINK_START_TAG}\n{system_text}\n"
+                f"{THINK_END_TAG}\nUnderstood.\n{END_OF_CONVERSATION_TAG}\n\n"
+            )
             conversation_tokens.extend(tokenizer.encode(seed, out_type=int))
 
     context_limit = max(1, config.model.block_size - args.max_response_tokens - 1)
@@ -167,7 +164,10 @@ def main() -> int:
         if user_text.lower() in {"exit", "quit", ":q"}:
             break
 
-        segment = f"{USER_TAG}\n{user_text}\n{ASSISTANT_THINK_TAG}\n"
+        segment = (
+            f"{USER_TAG}\n{user_text}\n\n"
+            f"{ASSISTANT_TAG}\n{THINK_START_TAG}\n"
+        )
         conversation_tokens.extend(tokenizer.encode(segment, out_type=int))
         conversation_tokens = trim_context(conversation_tokens, context_limit)
 
@@ -194,9 +194,7 @@ def main() -> int:
         thinking, answer = parse_generated(reply_text)
 
         if thinking:
-            condensed = re.sub(r"\s+", " ", thinking).strip()
-            if condensed:
-                print(f"[think] {condensed}")
+            print(f"[think] {thinking}")
 
         print(f"Assistant: {answer if answer else '(no final response)'}")
 
