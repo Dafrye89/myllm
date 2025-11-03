@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from .config import ExperimentConfig, get_preset
@@ -31,9 +32,58 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def convert_jsonl_sources(raw_dir: Path) -> None:
+    jsonl_files = sorted(raw_dir.glob("**/*.jsonl"))
+    if not jsonl_files:
+        return
+    for jsonl_path in jsonl_files:
+        txt_path = jsonl_path.with_suffix(".txt")
+        try:
+            if (
+                txt_path.exists()
+                and txt_path.stat().st_mtime >= jsonl_path.stat().st_mtime
+            ):
+                continue
+        except OSError:
+            pass
+        conversations: list[str] = []
+        with jsonl_path.open("r", encoding="utf-8") as src:
+            for line_no, line in enumerate(src, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    print(
+                        f"Warning: skipping malformed JSON in {jsonl_path} line {line_no}: {exc}"
+                    )
+                    continue
+                prompt = str(record.get("prompt") or record.get("user") or "").strip()
+                thinking = str(record.get("thinking") or record.get("chain_of_thought") or "").strip()
+                response = str(record.get("response") or record.get("answer") or "").strip()
+                if not prompt and not response:
+                    continue
+                parts: list[str] = []
+                if prompt:
+                    parts.append("<|user|>\n" + prompt)
+                if thinking:
+                    parts.append("<|assistant_think|>\n" + thinking)
+                if response:
+                    parts.append("<|assistant|>\n" + response)
+                parts.append("<|endofconversation|>")
+                conversations.append("\n".join(parts))
+        if conversations:
+            txt_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = "\n\n".join(conversations) + "\n"
+            txt_path.write_text(payload, encoding="utf-8")
+            print(f"Converted {jsonl_path} -> {txt_path}")
+
+
 def do_prepare(config: ExperimentConfig, raw_dir: Path | None) -> None:
     if raw_dir is not None:
         config.data.raw_dir = raw_dir
+    convert_jsonl_sources(config.data.raw_dir)
     raw_files = list(iter_text_files(config.data.raw_dir))
     if not raw_files:
         raise FileNotFoundError(

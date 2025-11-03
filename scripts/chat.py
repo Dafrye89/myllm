@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 """
-Interactive console chat backed by a myllm checkpoint.
+Interactive console chat that mirrors the conversation markup used for training.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -15,6 +16,11 @@ import torch
 from myllm.config import get_preset
 from myllm.model import GPT
 from myllm.tokenizer import load_tokenizer
+
+USER_TAG = "<|user|>"
+ASSISTANT_THINK_TAG = "<|assistant_think|>"
+ASSISTANT_TAG = "<|assistant|>"
+END_TAG = "<|endofconversation|>"
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -46,14 +52,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-response-tokens",
         type=int,
-        default=120,
-        help="Maximum tokens per assistant reply (default: 120)",
+        default=200,
+        help="Maximum tokens per assistant reply (default: 200)",
     )
     parser.add_argument(
         "--system",
         type=str,
-        default="You are a compact language model. Keep responses concise.",
-        help="Optional system seed text",
+        default="You are a concise assistant.",
+        help="Optional system note encoded as hidden thinking",
     )
     return parser
 
@@ -83,7 +89,47 @@ def load_model_and_tokenizer(preset: str, checkpoint_path: Path):
         dtype = torch.float32
     model.to(device=device, dtype=dtype)
 
-    return model, tokenizer, device, dtype, config
+    return model, tokenizer, device, config
+
+
+def trim_context(tokens: list[int], limit: int) -> list[int]:
+    if len(tokens) <= limit:
+        return tokens
+    return tokens[-limit:]
+
+
+def parse_generated(text: str) -> tuple[str | None, str]:
+    """
+    Extract thinking and final answer segments from raw decoded text.
+    """
+    working = text
+    thinking = None
+
+    # Remove any duplicated leading user tags.
+    if USER_TAG in working:
+        first_user_idx = working.find(USER_TAG)
+        if first_user_idx > 0:
+            working = working[first_user_idx:]
+
+    if ASSISTANT_THINK_TAG in working:
+        _, tail = working.split(ASSISTANT_THINK_TAG, 1)
+    else:
+        tail = working
+
+    if ASSISTANT_TAG in tail:
+        thinking_part, answer_part = tail.split(ASSISTANT_TAG, 1)
+        thinking = thinking_part.strip()
+        tail = answer_part
+
+    if END_TAG in tail:
+        tail, _ = tail.split(END_TAG, 1)
+
+    # Split at the next user tag to avoid the model queuing another turn.
+    if USER_TAG in tail:
+        tail, _ = tail.split(USER_TAG, 1)
+
+    answer = tail.strip()
+    return thinking, answer
 
 
 def main() -> int:
@@ -91,7 +137,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        model, tokenizer, device, _, config = load_model_and_tokenizer(
+        model, tokenizer, device, config = load_model_and_tokenizer(
             args.preset, args.checkpoint
         )
     except FileNotFoundError as exc:
@@ -104,9 +150,8 @@ def main() -> int:
     if args.system:
         system_text = args.system.strip()
         if system_text:
-            conversation_tokens.extend(
-                tokenizer.encode(system_text + "\nAssistant:", out_type=int)
-            )
+            seed = f"{ASSISTANT_THINK_TAG}\n{system_text}\n{END_TAG}\n"
+            conversation_tokens.extend(tokenizer.encode(seed, out_type=int))
 
     context_limit = max(1, config.model.block_size - args.max_response_tokens - 1)
 
@@ -122,61 +167,46 @@ def main() -> int:
         if user_text.lower() in {"exit", "quit", ":q"}:
             break
 
-        user_tokens = tokenizer.encode(f"\nUser: {user_text}\nAssistant:", out_type=int)
-        conversation_tokens.extend(user_tokens)
-        if len(conversation_tokens) > context_limit:
-            conversation_tokens = conversation_tokens[-context_limit:]
+        segment = f"{USER_TAG}\n{user_text}\n{ASSISTANT_THINK_TAG}\n"
+        conversation_tokens.extend(tokenizer.encode(segment, out_type=int))
+        conversation_tokens = trim_context(conversation_tokens, context_limit)
 
         prompt_tokens = conversation_tokens[:]
-        generated_tokens = prompt_tokens[:]
-        reply_tokens: list[int] = []
-        printed_text = ""
-        print("Assistant: ", end="", flush=True)
-        temperature = max(args.temperature, 1e-5)
+        input_ids = torch.tensor([prompt_tokens], device=device, dtype=torch.long)
 
         start_time = time.time()
         with torch.no_grad():
-            for _ in range(args.max_response_tokens):
-                context_tokens = generated_tokens[-config.model.block_size :]
-                input_ids = torch.tensor(
-                    [context_tokens], device=device, dtype=torch.long
-                )
-                logits, _ = model(input_ids)
-                logits = logits[:, -1, :] / temperature
-                if args.top_k > 0:
-                    values, _ = torch.topk(logits, args.top_k)
-                    cutoff = values[:, [-1]]
-                    logits = logits.masked_fill(logits < cutoff, float("-inf"))
-                probs = torch.softmax(logits, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1).item()
-
-                generated_tokens.append(next_token)
-                reply_tokens.append(next_token)
-
-                new_text = tokenizer.decode(reply_tokens)
-                if new_text:
-                    delta = new_text[len(printed_text) :]
-                    if delta:
-                        print(delta, end="", flush=True)
-                        printed_text = new_text
-
+            generated = model.generate(
+                input_ids,
+                max_new_tokens=args.max_response_tokens,
+                temperature=args.temperature,
+                top_k=args.top_k if args.top_k > 0 else None,
+            )
         elapsed = time.time() - start_time
 
-        if not reply_tokens or not printed_text:
-            print("(no output)")
-            conversation_tokens = generated_tokens
+        generated_tokens = generated[0].tolist()
+        reply_tokens = generated_tokens[len(prompt_tokens) :]
+        if not reply_tokens:
+            print("Assistant: (no output)")
             continue
 
-        print()
+        reply_text = tokenizer.decode(reply_tokens)
+        thinking, answer = parse_generated(reply_text)
+
+        if thinking:
+            condensed = re.sub(r"\s+", " ", thinking).strip()
+            if condensed:
+                print(f"[think] {condensed}")
+
+        print(f"Assistant: {answer if answer else '(no final response)'}")
 
         tok_per_sec = len(reply_tokens) / max(elapsed, 1e-6)
         print(
             f"[generated {len(reply_tokens)} tokens in {elapsed:.2f}s ({tok_per_sec:.1f} tok/s)]"
         )
 
-        conversation_tokens = generated_tokens
-        if len(conversation_tokens) > context_limit:
-            conversation_tokens = conversation_tokens[-context_limit:]
+        conversation_tokens.extend(reply_tokens)
+        conversation_tokens = trim_context(conversation_tokens, context_limit)
 
     return 0
 

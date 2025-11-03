@@ -59,7 +59,18 @@ def build_processed_dataset(config: DataConfig, seed: int) -> dict[str, Path]:
         )
     train_path = config.processed_dir / "train.bin"
     val_path = config.processed_dir / "val.bin"
-    if train_path.exists() and val_path.exists():
+    latest_raw_mtime = max(path.stat().st_mtime for path in raw_files)
+    try:
+        bins_current = (
+            train_path.exists()
+            and val_path.exists()
+            and train_path.stat().st_mtime >= latest_raw_mtime
+            and val_path.stat().st_mtime >= latest_raw_mtime
+            and tokenizer_model.stat().st_mtime <= min(train_path.stat().st_mtime, val_path.stat().st_mtime)
+        )
+    except OSError:
+        bins_current = False
+    if bins_current:
         return {"train": train_path, "val": val_path}
     tokenizer = load_tokenizer(tokenizer_model)
     documents = load_documents(raw_files)
