@@ -115,4 +115,96 @@ def get_preset(name: str) -> ExperimentConfig:
             output_dir=Path("outputs/small"),
         )
         return cfg
+    if name == "gpt350m":
+        cfg = ExperimentConfig(
+            name="gpt350m",
+            model=GPTConfig(
+                vocab_size=32000,
+                block_size=1024,
+                n_layer=24,
+                n_head=16,
+                n_embd=1024,
+                dropout=0.1,
+                bias=True,
+            ),
+            training=TrainingConfig(
+                device="auto",
+                dtype="bf16",
+                micro_batch_size=8,
+                grad_accumulation_steps=8,
+                num_epochs=1,
+                log_interval=50,
+                eval_interval=500,
+                checkpoint_interval=1000,
+                num_workers=2,
+                enable_activation_checkpointing=True,
+                mixed_precision=True,
+                optimizer=OptimizerConfig(
+                    lr=3e-4,
+                    betas=(0.9, 0.95),
+                    weight_decay=0.1,
+                    eps=1e-8,
+                    grad_clip=1.0,
+                ),
+                scheduler=SchedulerConfig(
+                    warmup_steps=3000,
+                    min_lr=3e-5,
+                    max_lr=3e-4,
+                ),
+            ),
+            data=DataConfig(
+                vocab_size=32000,
+                block_size=1024,
+                tokenizer_prefix="bpe32k",
+                sample_shuffle_buffer=8000,
+            ),
+            output_dir=Path("outputs/gpt350m"),
+        )
+        return cfg
+    if name == "gpt700m":
+        cfg = ExperimentConfig(
+            name="gpt700m",
+            model=GPTConfig(
+                vocab_size=32000,
+                block_size=512,
+                n_layer=32,
+                n_head=20,
+                n_embd=1280,
+                dropout=0.1,
+                bias=True,
+            ),
+            training=TrainingConfig(
+                device="auto",
+                dtype="bf16",
+                micro_batch_size=1,
+                grad_accumulation_steps=64,
+                num_epochs=1,
+                log_interval=50,
+                eval_interval=500,
+                checkpoint_interval=1000,
+                num_workers=2,
+                enable_activation_checkpointing=True,
+                mixed_precision=True,
+                optimizer=OptimizerConfig(
+                    lr=3e-4,
+                    betas=(0.9, 0.95),
+                    weight_decay=0.1,
+                    eps=1e-8,
+                    grad_clip=1.0,
+                ),
+                scheduler=SchedulerConfig(
+                    warmup_steps=3000,
+                    min_lr=3e-5,
+                    max_lr=3e-4,
+                ),
+            ),
+            data=DataConfig(
+                vocab_size=32000,
+                block_size=512,
+                tokenizer_prefix="bpe32k",
+                sample_shuffle_buffer=6000,
+            ),
+            output_dir=Path("outputs/gpt700m"),
+        )
+        return cfg
     raise ValueError(f"Unknown preset: {name}")
