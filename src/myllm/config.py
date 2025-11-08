@@ -182,7 +182,7 @@ def get_preset(name: str) -> ExperimentConfig:
                 log_interval=50,
                 eval_interval=500,
                 checkpoint_interval=1000,
-                num_workers=2,
+                num_workers=0,
                 enable_activation_checkpointing=True,
                 mixed_precision=True,
                 optimizer=OptimizerConfig(

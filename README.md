@@ -27,7 +27,10 @@ End-to-end toolkit for training a GPT-1 style decoder-only language model. Inclu
    scripts\run_small_cpu.bat
    ```
 
-Each batch script creates (or reuses) a `.venv`, installs dependencies, trains the tokenizer, encodes the dataset, and launches training with the chosen preset.
+Each batch script creates (or reuses) a `.venv`, installs dependencies, trains the tokenizer, encodes the dataset, and launches training with the chosen preset. For larger-capacity experiments (e.g., 700M parameters), use the dedicated wrappers:
+
+- `scripts\large_train.bat` → runs `run_training.bat gpt700m`
+- `scripts\small_train.bat`, `scripts\tiny_train.bat`, etc. → shorthand for other presets
 
 ### FineWeb downloader details
 
@@ -50,8 +53,10 @@ python -m myllm.cli sample --preset small --checkpoint outputs\small\final_00010
 
 ## Presets
 
-- `gpt1` – 12 layers, 768 hidden size, 32000 vocab, 512 context. Configured for AMP on a 24 GB GPU.
-- `small` – 6 layers, 384 hidden size, 16000 vocab, 256 context. Tuned for CPU laptops.
+- `gpt1` – 12 layers, 768 hidden size, 32K vocab, 512 context. Configured for AMP on a 24 GB GPU.
+- `small` – 6 layers, 384 hidden size, 16K vocab, 256 context. Tuned for CPU laptops.
+- `gpt350m` – 24 layers, 1,024 hidden size, 32K vocab, 1,024 context. Targets mid/high-end GPUs (≈16–24 GB) with bfloat16 training.
+- `gpt700m` – 32 layers, 1,280 hidden size, 32K vocab, 512 context. Designed for ≥24 GB VRAM with activation checkpointing and heavy gradient accumulation; expect long runs and significant memory pressure.
 
 Config snapshots are written alongside checkpoints (`outputs/<preset>/config.json`). Adjust any field by modifying `src/myllm/config.py` or cloning a preset via the CLI.
 

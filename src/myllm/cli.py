@@ -16,11 +16,13 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     prep = subparsers.add_parser("prepare-data", help="Train tokenizer and encode dataset")
-    prep.add_argument("--preset", default="gpt1", choices=["gpt1", "small"])
+    preset_choices = ["gpt1", "small", "gpt350m", "gpt700m"]
+
+    prep.add_argument("--preset", default="gpt1", choices=preset_choices)
     prep.add_argument("--raw-dir", type=Path, help="Directory containing raw .txt files")
 
     train_parser = subparsers.add_parser("train", help="Run training")
-    train_parser.add_argument("--preset", default="gpt1", choices=["gpt1", "small"])
+    train_parser.add_argument("--preset", default="gpt1", choices=preset_choices)
 
     sample = subparsers.add_parser("sample", help="Generate text from a checkpoint")
     sample.add_argument("--checkpoint", type=Path, required=True)
@@ -28,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     sample.add_argument("--max-tokens", type=int, default=100)
     sample.add_argument("--temperature", type=float, default=0.8)
     sample.add_argument("--top-k", type=int, default=50)
-    sample.add_argument("--preset", default="gpt1", choices=["gpt1", "small"])
+    sample.add_argument("--preset", default="gpt1", choices=preset_choices)
 
     return parser.parse_args()
 
@@ -76,9 +78,13 @@ def do_prepare(config: ExperimentConfig, raw_dir: Path | None) -> None:
         raise FileNotFoundError(
             f"No .txt files found in {config.data.raw_dir}. Add documents before preprocessing."
         )
-    print(f"Training tokenizer on {len(raw_files)} documents")
-    tokenizer_path = train_sentencepiece(config.data, raw_files)
-    print(f"Tokenizer saved to {tokenizer_path}")
+    tokenizer_path = config.data.processed_dir / f"{config.data.tokenizer_prefix}.model"
+    if tokenizer_path.exists():
+        print(f"Tokenizer already present at {tokenizer_path}; skipping training. Delete it to retrain.")
+    else:
+        print(f"Training tokenizer on {len(raw_files)} documents")
+        tokenizer_path = train_sentencepiece(config.data, raw_files)
+        print(f"Tokenizer saved to {tokenizer_path}")
     build_processed_dataset(config.data, config.training.seed)
     print(f"Encoded dataset written to {config.data.processed_dir}")
 

@@ -7,9 +7,10 @@ from typing import Iterable, Sequence
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+import time
 
 from .config import DataConfig
-from .tokenizer import encode_documents, load_tokenizer
+from .tokenizer import load_tokenizer
 
 
 def iter_text_files(directory: Path) -> Iterable[Path]:
@@ -18,31 +19,27 @@ def iter_text_files(directory: Path) -> Iterable[Path]:
             yield path
 
 
-def load_documents(paths: Sequence[Path]) -> list[str]:
-    documents: list[str] = []
+def iter_documents(paths: Sequence[Path], large_file_threshold: int = 256 * 1024 * 1024) -> Iterable[str]:
+    """
+    Yield documents from the provided paths without loading everything into memory.
+    For files larger than `large_file_threshold`, we stream line-by-line and treat
+    each non-empty line as an individual document.
+    """
     for path in paths:
-        text = path.read_text(encoding="utf-8")
-        text = text.strip()
-        if text:
-            documents.append(text)
-    return documents
-
-
-def make_splits(
-    documents: list[str], train_ratio: float, seed: int
-) -> tuple[list[str], list[str]]:
-    rng = random.Random(seed)
-    rng.shuffle(documents)
-    split_idx = max(1, int(len(documents) * train_ratio))
-    train_docs = documents[:split_idx]
-    val_docs = documents[split_idx:] or documents[:1]
-    return train_docs, val_docs
-
-
-def write_token_file(tokens: list[int], out_path: Path) -> None:
-    array = np.array(tokens, dtype=np.uint32)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    array.tofile(out_path)
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        if size > large_file_threshold:
+            with path.open("r", encoding="utf-8", errors="ignore") as handle:
+                for line in handle:
+                    doc = line.strip()
+                    if doc:
+                        yield doc
+        else:
+            text = path.read_text(encoding="utf-8").strip()
+            if text:
+                yield text
 
 
 def build_processed_dataset(config: DataConfig, seed: int) -> dict[str, Path]:
@@ -59,27 +56,59 @@ def build_processed_dataset(config: DataConfig, seed: int) -> dict[str, Path]:
         )
     train_path = config.processed_dir / "train.bin"
     val_path = config.processed_dir / "val.bin"
-    latest_raw_mtime = max(path.stat().st_mtime for path in raw_files)
-    try:
-        bins_current = (
-            train_path.exists()
-            and val_path.exists()
-            and train_path.stat().st_mtime >= latest_raw_mtime
-            and val_path.stat().st_mtime >= latest_raw_mtime
-            and tokenizer_model.stat().st_mtime <= min(train_path.stat().st_mtime, val_path.stat().st_mtime)
-        )
-    except OSError:
-        bins_current = False
-    if bins_current:
+    if train_path.exists() and val_path.exists():
+        print(f"Found existing tokenized dataset at {config.processed_dir}; skipping re-encode.")
         return {"train": train_path, "val": val_path}
     tokenizer = load_tokenizer(tokenizer_model)
-    documents = load_documents(raw_files)
-    train_docs, val_docs = make_splits(documents, config.train_split, seed)
-    train_tokens = encode_documents(tokenizer, train_docs, config.document_separator)
-    val_tokens = encode_documents(tokenizer, val_docs, config.document_separator)
+    sep_id = tokenizer.piece_to_id(config.document_separator)
+    if sep_id == -1:
+        raise ValueError(f"Document separator {config.document_separator} not found in tokenizer vocabulary")
 
-    write_token_file(train_tokens, train_path)
-    write_token_file(val_tokens, val_path)
+    rng = random.Random(seed)
+    train_path.parent.mkdir(parents=True, exist_ok=True)
+    with train_path.open("wb") as train_file, val_path.open("wb") as val_file:
+        val_written = False
+        train_written = False
+        start = time.time()
+        docs_processed = 0
+        tokens_written = 0
+        report_interval = 1000
+        for doc in iter_documents(raw_files):
+            tokens = tokenizer.encode(doc, out_type=int, add_bos=False, add_eos=False)
+            if not tokens:
+                continue
+            if not val_written:
+                target_file = val_file
+                val_written = True
+            elif not train_written:
+                target_file = train_file
+                train_written = True
+            else:
+                target_file = train_file if rng.random() < config.train_split else val_file
+            arr = np.array(tokens + [sep_id], dtype=np.uint32)
+            arr.tofile(target_file)
+            if target_file is train_file:
+                train_written = True
+            docs_processed += 1
+            tokens_written += len(tokens)
+            if docs_processed % report_interval == 0:
+                elapsed = time.time() - start
+                print(
+                    f"Encoded {docs_processed:,} docs ({tokens_written:,} tokens) "
+                    f"in {elapsed:.1f}s…",
+                    flush=True,
+                )
+
+    if not val_written:
+        raise RuntimeError("No documents were written to the validation split. Ensure your raw corpus is not empty.")
+    if not train_written:
+        raise RuntimeError("No documents were written to the training split. Provide additional data or adjust the split ratio.")
+    total_elapsed = time.time() - start
+    print(
+        f"Finished encoding {docs_processed:,} docs ({tokens_written:,} tokens) "
+        f"in {total_elapsed:.1f}s.",
+        flush=True,
+    )
     return {"train": train_path, "val": val_path}
 
 
