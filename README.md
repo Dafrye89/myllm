@@ -1,6 +1,12 @@
-﻿# myllm
+# myllm
 
 End-to-end toolkit for training a GPT-1 style decoder-only language model. Includes presets for a full 117M parameter setup (RTX 3090 target) and a compact CPU-friendly variant.
+
+## Project status and engineering scope
+
+An experimental training toolkit by [Derrick Frye](https://fryedapps.com), covering decoder-only model configuration, tokenization, dataset preparation, checkpointing, training, and sampling. The parameter sizes below are configuration targets, not evidence of completed training runs or measured model quality.
+
+Use your own appropriately licensed training data. Large dataset downloads and GPU presets can require substantial storage, memory, and runtime. This repository is a learning and experimentation project; no production-readiness or benchmark claim is implied.
 
 ## Layout
 
@@ -43,7 +49,7 @@ Re-run the batch file whenever you need to refresh the sample; it overwrites the
 
 ## Manual commands
 
-Activate the virtual environment created by the scripts and run the CLI directly:
+Activate the virtual environment created by the scripts, install the package with `python -m pip install -e .`, and run the CLI directly:
 
 ```powershell
 python -m myllm.cli prepare-data --preset gpt1
